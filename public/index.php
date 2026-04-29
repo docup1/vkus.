@@ -1,6 +1,61 @@
 <?php
 declare(strict_types=1);
 
+define('VIT_PUBLIC_ENTRY', true);
+
+error_reporting(E_ALL);
+ini_set('display_errors', '0');
+
+register_shutdown_function(static function (): void {
+    $error = error_get_last();
+    if (!$error || !in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+        return;
+    }
+
+    if (headers_sent() === false) {
+        http_response_code(500);
+        header('Content-Type: text/html; charset=UTF-8');
+    }
+
+    echo '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
+    echo '<title>Ошибка PHP</title><style>body{margin:0;background:#F8F4E8;color:#1B1B1B;font-family:Arial,sans-serif}main{max-width:820px;margin:8vh auto;padding:28px;background:#fff;border:2px solid #1B1B1B;border-radius:8px;box-shadow:8px 8px 0 #F7BE23}.msg{white-space:pre-wrap;padding:14px;background:#ffe8df;border-radius:8px;color:#9d260f}code{background:#f5f1e7;padding:2px 5px;border-radius:4px}</style></head><body><main>';
+    echo '<h1>Фатальная ошибка PHP</h1>';
+    echo '<p>Эта диагностическая страница нужна для настройки прод-сервера.</p>';
+    echo '<div class="msg">' . htmlspecialchars($error['message'] . "\n" . $error['file'] . ':' . $error['line'], ENT_QUOTES, 'UTF-8') . '</div>';
+    echo '</main></body></html>';
+});
+
+if (isset($_GET['health'])) {
+    header('Content-Type: text/html; charset=UTF-8');
+    $root = dirname(__DIR__);
+    $defaultDb = $root . '/database/app.sqlite';
+    $fallbackDb = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'vkusno-demo-app.sqlite';
+    $selectedDb = ((is_dir($root . '/database') || @mkdir($root . '/database', 0775, true)) && is_writable($root . '/database')) ? $defaultDb : $fallbackDb;
+    $checks = [
+        'PHP version' => PHP_VERSION,
+        'SAPI' => PHP_SAPI,
+        'public/index.php' => __FILE__,
+        'project root' => $root,
+        'app/bootstrap.php exists' => is_file($root . '/app/bootstrap.php') ? 'yes' : 'no',
+        'selected sqlite path' => $selectedDb,
+        'selected sqlite dir writable' => is_writable(dirname($selectedDb)) ? 'yes' : 'no',
+        'database dir exists' => is_dir($root . '/database') ? 'yes' : 'no',
+        'database dir writable' => is_writable($root . '/database') ? 'yes' : 'no',
+        'database/app.sqlite exists' => is_file($root . '/database/app.sqlite') ? 'yes' : 'no',
+        'database/app.sqlite writable' => is_file($root . '/database/app.sqlite') ? (is_writable($root . '/database/app.sqlite') ? 'yes' : 'no') : 'n/a',
+        'pdo_sqlite loaded' => extension_loaded('pdo_sqlite') ? 'yes' : 'no',
+        'sqlite3 loaded' => extension_loaded('sqlite3') ? 'yes' : 'no',
+        'openssl loaded' => extension_loaded('openssl') ? 'yes' : 'no',
+        'mbstring loaded' => extension_loaded('mbstring') ? 'yes' : 'no',
+    ];
+    echo '<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>VIT health</title><style>body{font-family:Arial,sans-serif;background:#F8F4E8;color:#1B1B1B}main{max-width:900px;margin:40px auto;background:#fff;padding:24px;border:2px solid #1B1B1B;border-radius:8px}td{padding:8px 12px;border-bottom:1px solid #ddd}td:first-child{font-weight:700}</style></head><body><main><h1>VIT health</h1><table>';
+    foreach ($checks as $name => $value) {
+        echo '<tr><td>' . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . '</td><td>' . htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8') . '</td></tr>';
+    }
+    echo '</table></main></body></html>';
+    exit;
+}
+
 require __DIR__ . '/../app/bootstrap.php';
 
 $currentRoute = route();

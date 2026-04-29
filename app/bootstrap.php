@@ -1,8 +1,15 @@
 <?php
 declare(strict_types=1);
 
+if (PHP_SAPI !== 'cli' && !defined('VIT_PUBLIC_ENTRY')) {
+    http_response_code(404);
+    exit;
+}
+
 define('BASE_PATH', dirname(__DIR__));
-define('DB_PATH', BASE_PATH . '/database/app.sqlite');
+define('DB_DIR', BASE_PATH . '/database');
+define('DB_DEFAULT_PATH', DB_DIR . '/app.sqlite');
+define('DB_FALLBACK_PATH', rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'vkusno-demo-app.sqlite');
 define('JWT_SECRET', 'demo-vkusno-i-tochka-secret-change-me');
 define('JWT_COOKIE', 'vit_token');
 
@@ -18,13 +25,85 @@ function db(): PDO
         return $pdo;
     }
 
-    $pdo = new PDO('sqlite:' . DB_PATH);
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-    $pdo->exec('PRAGMA foreign_keys = ON');
-    migrate($pdo);
+    try {
+        ensure_database_storage();
+
+        $pdo = new PDO('sqlite:' . database_path());
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+        $pdo->exec('PRAGMA foreign_keys = ON');
+        migrate($pdo);
+    } catch (Throwable $e) {
+        render_boot_error($e);
+    }
 
     return $pdo;
+}
+
+function ensure_database_storage(): void
+{
+    if (!extension_loaded('pdo_sqlite')) {
+        throw new RuntimeException('На сервере не включено PHP-расширение pdo_sqlite.');
+    }
+
+    $path = database_path();
+    $dir = dirname($path);
+
+    if (!is_dir($dir) && !mkdir($dir, 0775, true) && !is_dir($dir)) {
+        throw new RuntimeException('Не удалось создать папку для SQLite: ' . $dir);
+    }
+
+    if (!is_writable($dir)) {
+        @chmod($dir, 0775);
+    }
+
+    if (!is_writable($dir)) {
+        throw new RuntimeException('Папка SQLite недоступна на запись для PHP: ' . $dir);
+    }
+
+    if (is_file($path) && !is_writable($path)) {
+        @chmod($path, 0664);
+    }
+
+    if (is_file($path) && !is_writable($path)) {
+        throw new RuntimeException('Файл SQLite недоступен на запись для PHP: ' . $path);
+    }
+}
+
+function database_path(): string
+{
+    $fromEnv = getenv('VIT_SQLITE_PATH');
+    if (is_string($fromEnv) && $fromEnv !== '') {
+        return $fromEnv;
+    }
+
+    if ((is_dir(DB_DIR) || @mkdir(DB_DIR, 0775, true)) && is_writable(DB_DIR)) {
+        if (!is_file(DB_DEFAULT_PATH) || is_writable(DB_DEFAULT_PATH) || @chmod(DB_DEFAULT_PATH, 0664)) {
+            return DB_DEFAULT_PATH;
+        }
+    }
+
+    return DB_FALLBACK_PATH;
+}
+
+function render_boot_error(Throwable $e): void
+{
+    http_response_code(500);
+    $message = $e->getMessage();
+    error_log('[vkusno-demo] ' . $message);
+
+    if (PHP_SAPI === 'cli') {
+        fwrite(STDERR, $message . PHP_EOL);
+        exit(1);
+    }
+
+    echo '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
+    echo '<title>Ошибка запуска</title><style>body{margin:0;background:#F8F4E8;color:#1B1B1B;font-family:Arial,sans-serif}main{max-width:760px;margin:8vh auto;padding:28px;background:#fff;border:2px solid #1B1B1B;border-radius:8px;box-shadow:8px 8px 0 #F7BE23}h1{margin-top:0;font-size:32px}.msg{padding:14px;background:#ffe8df;border-radius:8px;color:#9d260f}code{background:#f5f1e7;padding:2px 5px;border-radius:4px}</style></head><body><main>';
+    echo '<h1>Сайт запустился, но база данных недоступна</h1>';
+    echo '<p>Проверьте, что PHP может создавать и изменять SQLite-файл. Сейчас выбран путь: <code>' . htmlspecialchars(database_path(), ENT_QUOTES, 'UTF-8') . '</code>.</p>';
+    echo '<p class="msg">' . htmlspecialchars($message, ENT_QUOTES, 'UTF-8') . '</p>';
+    echo '</main></body></html>';
+    exit;
 }
 
 function migrate(PDO $pdo): void
